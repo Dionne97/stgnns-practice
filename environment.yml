@@ -1,0 +1,18 @@
+name: stgnn-env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pytorch
+  - pytorch-lightning
+  - numpy
+  - pandas
+  - scikit-learn
+  - hdf5
+  - pytables
+  - pip
+  - pip:
+      - torch-scatter
+      - torch-sparse
+      - git+https://github.com/pyg-team/pytorch_geometric.git
+      - git+https://github.com/TorchSpatiotemporal/tsl.git
