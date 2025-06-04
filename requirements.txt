@@ -1,0 +1,23 @@
+# Core PyTorch for your M1)
+torch==2.2.2
+torchvision==0.17.2
+torchaudio==2.2.2
+
+# PyTorch Geometric and its key dependencies
+torch-scatter==2.1.2
+torch-sparse==0.6.18
+torch-geometric==2.6.1
+
+# Torch Spatiotemporal library 
+torch-spatiotemporal @ git+https://github.com/TorchSpatiotemporal/tsl.git@a3ba25c9bfdf4d56df6216111275c060cc65b6e8
+
+# Other dependencies
+numpy==1.26.4
+pandas==2.2.3
+pytorch-lightning==2.5.1.post0
+einops==0.8.1
+matplotlib==3.10.3
+
+# Logging for PyTorch Lightning
+tensorboard==2.19.0
+# tensorboardX==2.6.2.2 
