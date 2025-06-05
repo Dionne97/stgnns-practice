@@ -19,6 +19,7 @@ from tsl.metrics.torch import MaskedMAE, MaskedMAPE, MaskedMSE
 from tsl.engines import Predictor
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
+from tsl.nn.models.stgn import GraphWaveNetModel
 
 # --------------------------------------------------
 # Configuration / Hyper‑parameters
@@ -131,19 +132,20 @@ class TimeThenSpaceModel(nn.Module):
 # Plot helpers
 # --------------------------------------------------
 
-def plot_adjacency_heatmap(adj, fname="adjacency_heatmap.png"):
+def plot_adjacency_heatmap(adj, model_name):
     plt.figure(figsize=(10, 8))
     sns.heatmap(adj, cmap="viridis")
-    plt.title("Adjacency Matrix Heatmap")
+    plt.title(f"({model_name.upper()}) Adjacency Matrix Heatmap")
     plt.tight_layout()
+    fname = f"{model_name}_adjacency_heatmap.png"
     plt.savefig(fname)
     plt.close()
     print(f"Saved adjacency heatmap → {fname}")
 
 
-def plot_metric_single(df: pd.DataFrame, metric: str):
+def plot_metric_single(df: pd.DataFrame, metric: str, model_name: str):
     """Bar plot of a single metric vs horizon."""
-    title = f"{metric.upper()} vs Prediction Horizon"
+    title = f"({model_name.upper()}) {metric.upper()} vs Prediction Horizon"
     plt.figure(figsize=(6, 5))
     df[metric].plot(kind="bar")
     plt.title(title)
@@ -151,41 +153,35 @@ def plot_metric_single(df: pd.DataFrame, metric: str):
     plt.ylabel(metric.upper())
     plt.xticks(rotation=0)
     plt.tight_layout()
-    fname = f"{metric.lower()}_vs_horizon.png"
+    fname = f"{model_name}_{metric.lower()}_vs_horizon.png"
     plt.savefig(fname)
     plt.close()
     print(f"Saved {title} → {fname}")
 
 
-def plot_actual_vs_predicted(actual, pred, sensor, step, length=200):
+def plot_actual_vs_predicted(actual, pred, sensor, step, model_name, length=200):
     plt.figure(figsize=(14, 4))
     plt.plot(actual[:length, step, sensor, 0], label="Actual")
     plt.plot(pred[:length, step, sensor, 0], label="Predicted")
-    plt.title(f"Sensor {sensor} · Horizon step {step}")
+    plt.title(f"({model_name.upper()}) Sensor {sensor} · Horizon step {step}")
     plt.legend()
     plt.tight_layout()
-    fname = f"sensor{sensor}_h{step}.png"
+    fname = f"sensor{sensor}_h{step}_{model_name}.png"
     plt.savefig(fname)
     plt.close()
     print(f"Saved {fname}")
 
 
 # --------------------------------------------------
-# Main
+# Experiment runner
 # --------------------------------------------------
 
-def main():
-    print(f"tsl {tsl.__version__} | torch {torch.__version__}")
-    plt.style.use("seaborn-v0_8-whitegrid")
+def run_experiment(model, dm, model_name):
+    """Generic function to run a training and testing experiment."""
+    print("=" * 60)
+    print(f"Running experiment for model: {model_name}")
+    print("=" * 60)
 
-    dm = create_datamodule()
-
-    model = TimeThenSpaceModel(input_size=dm.n_channels,
-                               n_nodes=dm.n_nodes,
-                               horizon=dm.horizon,
-                               hidden_size=HIDDEN_SIZE,
-                               rnn_layers=RNN_LAYERS,
-                               gnn_kernel=GNN_KERNEL)
     print_model_size(model)
 
     loss_fn = MaskedMAE()
@@ -209,7 +205,7 @@ def main():
         metrics=metrics,
     )
 
-    logger = TensorBoardLogger("logs", "stgnn", "v_single_metrics")
+    logger = TensorBoardLogger("logs", name=model_name)
     ckpt_cb = ModelCheckpoint(
         dirpath=f"logs/{logger.name}/{logger.version}",
         save_top_k=1, monitor="val_mae", mode="min")
@@ -228,7 +224,7 @@ def main():
 
     predictor.freeze()
     test_res = trainer.test(predictor, datamodule=dm, ckpt_path="best", verbose=False)[0]
-    print("Test metrics:", test_res)
+    print(f"Test metrics for {model_name}:", test_res)
 
     # --------------------------------------------------
     # Build performance DataFrame & plot each metric separately
@@ -241,8 +237,11 @@ def main():
         "mape": [test_res["test_mape"]]*3,
     }).set_index("horizon")
 
+    print("\nAverage Performance Metrics Across All Sensors:")
+    print(perf)
+
     for m in ["mae", "mse", "mape"]:
-        plot_metric_single(perf, m)
+        plot_metric_single(perf, m, model_name)
 
     # --------------------------------------------------
     # Prediction sample plots
@@ -256,14 +255,61 @@ def main():
     for s_id in range(min(3, dm.n_nodes)):
         for label, h in steps.items():
             if h < preds.shape[1]:
-                plot_actual_vs_predicted(actual, preds, sensor=s_id, step=h)
+                plot_actual_vs_predicted(actual, preds, sensor=s_id, step=h, model_name=model_name)
 
     # --------------------------------------------------
     # Adjacency heatmap
     # --------------------------------------------------
     adj = edge_index_to_adj(dm.edge_index, dm.edge_weight).cpu().numpy()
-    plot_adjacency_heatmap(adj)
+    plot_adjacency_heatmap(adj, model_name)
+
+
+# --------------------------------------------------
+# Main
+# --------------------------------------------------
+
+def tts():
+    """Run TimeThenSpaceModel experiment."""
+    print(f"tsl {tsl.__version__} | torch {torch.__version__}")
+    plt.style.use("seaborn-v0_8-whitegrid")
+
+    dm = create_datamodule()
+
+    model = TimeThenSpaceModel(input_size=dm.n_channels,
+                               n_nodes=dm.n_nodes,
+                               horizon=dm.horizon,
+                               hidden_size=HIDDEN_SIZE,
+                               rnn_layers=RNN_LAYERS,
+                               gnn_kernel=GNN_KERNEL)
+    
+    run_experiment(model, dm, "tts")
+
+
+def graphwavenet():
+    """Run GraphWaveNetModel experiment."""
+    dm = create_datamodule()
+    model = GraphWaveNetModel(
+        input_size=dm.n_channels,
+        output_size=dm.n_channels,  # Assuming prediction of all input features
+        horizon=DATA_HORIZON,
+        n_nodes=dm.n_nodes,
+        hidden_size=HIDDEN_SIZE,
+        ff_size=256,                 # Default value
+        n_layers=RNN_LAYERS,         # Using existing global RNN_LAYERS
+        temporal_kernel_size=2,      # Default value
+        spatial_kernel_size=GNN_KERNEL, # Using existing global GNN_KERNEL
+        learned_adjacency=True,      # Default value
+        emb_size=10,                 # Default value for learned_adjacency
+        dilation=2,                  # Default value
+        dilation_mod=2,              # Default value
+        norm='batch',                # From use_batch_norm=True
+        dropout=0.1,                 # Retained existing value
+        exog_size=0                  # Default value
+    )
+    
+    run_experiment(model, dm, "graphwavenet")
 
 
 if __name__ == "__main__":
-    main()
+    tts()
+    graphwavenet()
